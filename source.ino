@@ -1,3 +1,61 @@
+#include <Wire.h>
+
+#define HT_ADDR 0x70
+
+// Segmenty liter - dopasowane do 7-seg
+uint8_t segBlank = 0x00;
+uint8_t segA = 0b01110111;  // A
+uint8_t segC = 0b00111001;  // C
+uint8_t segD = 0b01011110;  // D (d małe)
+uint8_t segE = 0b01111001;  // E
+uint8_t segG = 0b01111101;  // G
+
+// Inicjalizacja HT16K33
+void initDisplay() {
+  Wire.begin();
+
+  Wire.beginTransmission(HT_ADDR);
+  Wire.write(0x21);     // włącz oscylator
+  Wire.endTransmission();
+
+  Wire.beginTransmission(HT_ADDR);
+  Wire.write(0x81);     // włącz wyświetlacz
+  Wire.endTransmission();
+
+  Wire.beginTransmission(HT_ADDR);
+  Wire.write(0xEF);     // jasność max
+  Wire.endTransmission();
+}
+
+// Wyslanie segmentów na 4 cyfry
+void sendSegments(uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3) {
+  Wire.beginTransmission(HT_ADDR);
+  Wire.write(0x00); // adres RAM
+
+  Wire.write(d0); Wire.write(0x00);
+  Wire.write(d1); Wire.write(0x00);
+  Wire.write(d2); Wire.write(0x00);
+  Wire.write(d3); Wire.write(0x00);
+
+  Wire.endTransmission();
+}
+
+// pokazanie litery nuty
+void showNoteChar(char n) {
+  uint8_t s;
+
+  switch(n) {
+    case 'A': s = segA; break;
+    case 'C': s = segC; break;
+    case 'D': s = segD; break;
+    case 'E': s = segE; break;
+    case 'G': s = segG; break;
+    default:  s = segBlank;
+  }
+
+  sendSegments(s, segBlank, segBlank, segBlank);
+}
+
 // Piny przycisków nut
 int cNote = 9;  // C
 int dNote = 8;  // D
@@ -8,7 +66,7 @@ int aNote = 5;  // A
 // Piny kontrolne
 int Piezo = 2;
 int recordButton = A3;  // Przycisk RECORD
-int playButton = A4;    // Przycisk PLAY
+int playButton = A2;    // Przycisk PLAY
 int redLED = 10;        // Czerwona dioda - nagrywanie
 int greenLED = 11;      // Zielona dioda - odtwarzanie
 
@@ -34,8 +92,7 @@ bool playButtonPressed = false;
 unsigned long noteStartTime = 0;
 double currentFrequency = 0;
 
-void setup()
-{
+void setup() {
   // Przyciski nut
   pinMode(cNote, INPUT);
   pinMode(dNote, INPUT);
@@ -46,21 +103,22 @@ void setup()
   // Przyciski kontrolne
   pinMode(recordButton, INPUT_PULLUP);
   pinMode(playButton, INPUT_PULLUP);
-  
-  // Diody LED
+
+  // LEDy
   pinMode(redLED, OUTPUT);
   pinMode(greenLED, OUTPUT);
-  digitalWrite(redLED, LOW);    // Wyłącz na start
-  digitalWrite(greenLED, LOW);  // Wyłącz na start
-  
+
   pinMode(Piezo, OUTPUT);
+
   Serial.begin(9600);
-  Serial.println("Piano (5 nut) gotowe!");
-  Serial.println("A3 = RECORD, A4 = PLAY");
+
+  initDisplay();
+  showNoteChar(' '); // na start pusto
+
+  Serial.println("Piano gotowe!");
 }
 
-void loop()
-{
+void loop() {
   // Obsługa przycisku RECORD
   if (digitalRead(recordButton) == LOW && !recordButtonPressed) {
     recordButtonPressed = true;
@@ -76,38 +134,43 @@ void loop()
       Serial.print(noteCount);
       Serial.println(" nut ***");
     }
-    delay(200); // debounce
+    delay(200);
   }
-  if (digitalRead(recordButton) == HIGH) {
-    recordButtonPressed = false;
-  }
-  
-  // Obsługa przycisku PLAY
+  if (digitalRead(recordButton) == HIGH) recordButtonPressed = false;
+
+  // ---------------- PLAY ----------------
   if (digitalRead(playButton) == LOW && !playButtonPressed) {
     playButtonPressed = true;
     playMelody();
-    delay(200); // debounce
+    delay(200);
   }
-  if (digitalRead(playButton) == HIGH) {
-    playButtonPressed = false;
-  }
-  
-  // Odczyt aktualnie granej nuty
+  if (digitalRead(playButton) == HIGH) playButtonPressed = false;
+
+  // ---------------- NUTY ----------------
   double freq = 0;
-  
+  char noteChar = ' ';
+
   if (digitalRead(cNote) == 1) {
-    freq = c;
+    freq = c; noteChar = 'C';
+    Serial.println("Nacisnieto przycisk: C");
   } else if (digitalRead(dNote) == 1) {
-    freq = d;
+    freq = d; noteChar = 'D';
+    Serial.println("Nacisnieto przycisk: D");
   } else if (digitalRead(eNote) == 1) {
-    freq = e;
+    freq = e; noteChar = 'E';
+    Serial.println("Nacisnieto przycisk: E");
   } else if (digitalRead(gNote) == 1) {
-    freq = g;
+    freq = g; noteChar = 'G';
+    Serial.println("Nacisnieto przycisk: G");
   } else if (digitalRead(aNote) == 1) {
-    freq = a;
+    freq = a; noteChar = 'A';
+    Serial.println("Nacisnieto przycisk: A");
   }
-  
-  // Odtwarzanie dźwięku
+
+  // pokaz nutę na wyświetlaczu
+  showNoteChar(noteChar);
+
+  // dźwięk
   if (freq > 0) {
     tone(Piezo, freq);
     
@@ -153,16 +216,22 @@ void playMelody() {
   delay(500);
   
   for (int i = 0; i < noteCount; i++) {
-    if (melody[i].frequency > 0) {
-      tone(Piezo, melody[i].frequency);
-      // Sztywne tempo 0.5s na nutę (400ms grania + 100ms przerwy)
-      delay(400);
-      noTone(Piezo);
-      delay(100);
-    }
+    char noteChar = ' ';
+
+    if (melody[i].frequency == c) noteChar = 'C';
+    if (melody[i].frequency == d) noteChar = 'D';
+    if (melody[i].frequency == e) noteChar = 'E';
+    if (melody[i].frequency == g) noteChar = 'G';
+    if (melody[i].frequency == a) noteChar = 'A';
+
+    showNoteChar(noteChar);
+
+    tone(Piezo, melody[i].frequency);
+    delay(400);
+    noTone(Piezo);
+    delay(100);
   }
-  
-  noTone(Piezo);
-  digitalWrite(greenLED, LOW);   // Zgaś zieloną diodę
-  Serial.println("*** KONIEC ODTWARZANIA ***");
+
+  digitalWrite(greenLED, LOW);
+  showNoteChar(' ');
 }
